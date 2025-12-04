@@ -1070,7 +1070,7 @@
   </nav>
 
   <!-- Toast Notification -->
-  <div id="toast" class="toast">
+  <div id="toast" class="toast" >
     <div class="toast-content">
       <span class="toast-icon">✅</span>
       <div>
@@ -1288,6 +1288,7 @@
       </div>
     </div>
   </div>
+
 
   <!-- League Page -->
   <div id="league" class="page">
@@ -1668,6 +1669,9 @@
       weekPoints: 0,
       daysLogged: 0,
       streak: 0,
+      lastLogDate: null, 
+      lastReminderDate: null,
+      lastEntryPoints: 0,
       league: {
         name: 'Fantasy Life League',
         code: 'FLL2025',
@@ -1760,6 +1764,9 @@
       state.daysLogged = Math.min(7, state.daysLogged + 1);
       state.streak++;
       state.matchup.userScore += points;
+      const todayStr = new Date().toISOString().slice(0, 10); // "YYYY-MM-DD"
+      state.lastLogDate = todayStr;
+      state.lastEntryPoints = points; 
       
       // Update user in league
       const userPlayer = state.league.players.find(p => p.isUser);
@@ -1845,6 +1852,23 @@
       navigator.clipboard.writeText(state.league.code);
       showToast('Invite code copied!');
     }
+    // maybe show daily reminder
+    function maybeShowDailyReminder() {
+      const todayStr = new Date().toISOString().slice(0, 10);
+      // If user already logged today, no reminder
+    if (state.lastLogDate === todayStr) return;
+
+    // If we already reminded them today, don't nag again
+    if (state.lastReminderDate === todayStr) return;
+    const wantsReminder = confirm("Don't forget to log your habits today! 🌙📚🏋️\n\nOpen the dashboard now?");
+
+    if (wantsReminder) {
+    showPage('dashboard');
+  }
+  // Remember that we reminded them today
+  state.lastReminderDate = todayStr;
+  saveState();
+  }
 
     // Update all UI elements
     function updateUI() {
@@ -1858,7 +1882,7 @@
       document.getElementById('record').textContent = `${state.user.wins}-${state.user.losses}`;
       
       // Today's points
-      document.getElementById('todayPoints').textContent = `+${state.weekPoints.toFixed(1)} pts`;
+      document.getElementById('todayPoints').textContent = `+${state.lastEntryPoints.toFixed(1)} pts`;
       
       // Week overview
       document.getElementById('daysLogged').textContent = `${state.daysLogged}/7`;
@@ -2115,6 +2139,9 @@
     loadState();
     if (state.user.name === 'Player') {
       setTimeout(promptForName, 500);
+    } else {
+      // Only show reminder if we already know who they are
+      maybeShowDailyReminder();
     }
   </script>
 </body>
