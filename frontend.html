@@ -611,6 +611,74 @@
       padding: 20px;
     }
 
+    .league-chat {
+  margin-top: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.chat-messages {
+  background: var(--bg-elevated);
+  border-radius: 10px;
+  border: 1px solid rgba(0, 255, 240, 0.15);
+  padding: 12px;
+  max-height: 260px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.chat-message {
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.25);
+  border-left: 3px solid rgba(0, 255, 240, 0.3);
+  font-size: 0.85rem;
+}
+
+.chat-message.self {
+  border-left-color: var(--neon-green);
+  background: rgba(0, 255, 102, 0.08);
+}
+
+.chat-meta {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  margin-bottom: 2px;
+}
+
+.chat-user {
+  font-weight: 600;
+  color: var(--neon-cyan);
+}
+
+.chat-time {
+  font-family: var(--font-mono);
+}
+
+.chat-text {
+  color: var(--text-secondary);
+}
+
+.chat-input-row {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.chat-input-row input {
+  flex: 1;
+}
+
+.chat-status {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+}
+
     .card-header {
       display: flex;
       align-items: center;
@@ -1347,6 +1415,33 @@
             <span>📅 30 Week Season</span>
           </div>
         </div>
+
+        <div class="section" style="margin-top: 24px;">
+          <div class="section-header">
+            <h2>💬 League Chat</h2>
+            <span class="chat-status" id="chatStatus">Connecting…</span>
+          </div>
+  
+          <div class="league-chat">
+            <div id="chatMessages" class="chat-messages" aria-live="polite">
+              <!-- Messages injected by JS -->
+            </div>
+  
+            <form id="chatForm" class="chat-input-row">
+              <input 
+                type="text" 
+                id="chatInput" 
+                placeholder="Send a message to your league…" 
+                autocomplete="off"
+                maxlength="500"
+              />
+              <button type="submit" class="btn btn-primary" style="white-space: nowrap;">
+                Send
+              </button>
+            </form>
+          </div>
+        </div>
+  
         
         <div style="display: flex; gap: 16px; align-items: flex-start; flex-wrap: wrap;">
           <div>
@@ -1381,6 +1476,10 @@
       </div>
     </div>
   </div>
+
+
+
+
 
   <!-- Matchup Page -->
   <div id="matchup" class="page">
@@ -1724,7 +1823,20 @@
         oppScore: 0,
         categories: {}
       }
-    };
+    }; 
+
+    // === API CONFIG ===
+const API_BASE = "http://localhost:8000"; // or your deployed URL
+
+// Assume you store JWT in localStorage as 'fllToken'
+function getAuthHeaders() {
+  const token = localStorage.getItem("fllToken");
+  if (!token) return null;
+  return {
+    "Content-Type": "application/json",
+    "Authorization": `Bearer ${token}`
+  };
+}
 
     // Load from localStorage
     function loadState() {
@@ -2125,15 +2237,132 @@
         </div>
       `;
     }
+    let chatPollInterval = null;
 
-    // Page navigation
-    function showPage(pageId) {
-      document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
-      document.querySelectorAll('.nav-link').forEach(l => l.classList.remove('active'));
-      
-      document.getElementById(pageId).classList.add('active');
-      document.querySelector(`[data-page="${pageId}"]`).classList.add('active');
+async function fetchLeagueChat() {
+  const statusEl = document.getElementById("chatStatus");
+  const messagesEl = document.getElementById("chatMessages");
+  const headers = getAuthHeaders();
+
+  if (!headers) {
+    statusEl.textContent = "Login to use league chat.";
+    return;
+  }
+
+  try {
+    statusEl.textContent = "Syncing…";
+
+    const res = await fetch(`${API_BASE}/league/chat?limit=50`, {
+      method: "GET",
+      headers
+    });
+
+    if (!res.ok) {
+      statusEl.textContent = "Chat unavailable.";
+      return;
     }
+
+    const data = await res.json(); // List[LeagueChatMessageOut]
+    renderChatMessages(data);
+    statusEl.textContent = "Connected.";
+  } catch (err) {
+    console.error("Failed to fetch chat:", err);
+    statusEl.textContent = "Connection error.";
+  }
+}
+
+function renderChatMessages(messages) {
+  const messagesEl = document.getElementById("chatMessages");
+  const currentUserName = state.user?.name || "";
+
+  messagesEl.innerHTML = messages.map(msg => {
+    const isSelf = msg.user_name === currentUserName;
+    const time = new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    return `
+      <div class="chat-message ${isSelf ? "self" : ""}">
+        <div class="chat-meta">
+          <span class="chat-user">${isSelf ? "You" : msg.user_name}</span>
+          <span class="chat-time">${time}</span>
+        </div>
+        <div class="chat-text">${escapeHtml(msg.message)}</div>
+      </div>
+    `;
+  }).join("");
+
+  // Auto-scroll to bottom
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+}
+
+// Basic HTML escaping
+function escapeHtml(text) {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+async function sendChatMessage(event) {
+  event.preventDefault();
+  const input = document.getElementById("chatInput");
+  const statusEl = document.getElementById("chatStatus");
+  const message = input.value.trim();
+  const headers = getAuthHeaders();
+
+  if (!headers) {
+    showToast("Login required to send chat.", true);
+    return;
+  }
+  if (!message) return;
+
+  try {
+    statusEl.textContent = "Sending…";
+
+    const res = await fetch(`${API_BASE}/league/chat`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ message })
+    });
+
+    if (!res.ok) {
+      showToast("Failed to send message.", true);
+      statusEl.textContent = "Error sending.";
+      return;
+    }
+
+    input.value = "";
+    statusEl.textContent = "Connected.";
+    // Refresh chat after sending
+    await fetchLeagueChat();
+  } catch (err) {
+    console.error("Failed to send chat:", err);
+    showToast("Chat error.", true);
+    statusEl.textContent = "Connection error.";
+  }
+}
+
+  // Page navigation
+function showPage(pageId) {
+  // Hide all pages + deactivate nav
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.nav-link').forEach(l => l.classList.remove('active'));
+  
+  // Show selected page + highlight nav
+  document.getElementById(pageId).classList.add('active');
+  const navLink = document.querySelector(`[data-page="${pageId}"]`);
+  if (navLink) navLink.classList.add('active');
+
+  // Start / stop chat polling when on League page
+  if (pageId === "league") {
+    fetchLeagueChat();
+    if (chatPollInterval) clearInterval(chatPollInterval);
+    chatPollInterval = setInterval(fetchLeagueChat, 8000); // every 8s
+  } else {
+    if (chatPollInterval) {
+      clearInterval(chatPollInterval);
+      chatPollInterval = null;
+    }
+  }
+}
 
     // Nav link handlers
     document.querySelectorAll('.nav-link').forEach(link => {
@@ -2142,6 +2371,12 @@
         showPage(link.dataset.page);
       });
     });
+
+    const chatForm = document.getElementById("chatForm");
+    if (chatForm) {
+    chatForm.addEventListener("submit", sendChatMessage);
+    }
+
 
     // Initial prompt for name
     function promptForName() {
