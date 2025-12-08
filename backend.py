@@ -41,6 +41,7 @@ db = client["fantasy_life_league"]
 users_collection = db["users"]
 leagues_collection = db["leagues"]
 matchups_collection = db["matchups"]
+chats_collection = db["league_chat"]
 habit_entries_collection = db["habit_entries"]
 
 # Security
@@ -129,6 +130,18 @@ class LeagueIn(BaseModel):
 
 class LeagueJoin(BaseModel):
     code: str
+
+class LeagueChatMessageIn(BaseModel):
+    message: str = Field(..., min_length=1, max_length=500)
+
+
+class LeagueChatMessageOut(BaseModel):
+    id: str = Field(alias="_id")
+    league_id: str
+    user_id: str
+    user_name: str
+    message: str
+    timestamp: str  # ISO 8601 string
 
 # --- Core Logic: Scoring, Streaks, Education (Educate/Track/Reward) ---
 
@@ -523,6 +536,85 @@ async def get_league_standings(user_id: str = Depends(verify_token)):
         "standings": standings_data,
         "member_count": len(member_ids)
     }
+
+# --- League Chat Endpoints ---
+@app.post("/league/chat", response_model=LeagueChatMessageOut)
+async def post_league_chat(
+    chat_in: LeagueChatMessageIn,
+    user_id: str = Depends(verify_token)
+):
+    """
+    Post a message to the current user's league chat.
+    """
+    user = get_current_user_doc(user_id)
+    league_id = user.get("league_id")
+
+    if not league_id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User is not in a league"
+        )
+
+    now = datetime.utcnow()
+    chat_doc = {
+        "league_id": ObjectId(league_id),
+        "user_id": ObjectId(user_id),
+        "user_name": user["name"],
+        "message": chat_in.message.strip(),
+        "timestamp": now,
+    }
+
+    result = chats_collection.insert_one(chat_doc)
+    saved = chats_collection.find_one({"_id": result.inserted_id})
+
+    return {
+        "_id": str(saved["_id"]),
+        "league_id": str(saved["league_id"]),
+        "user_id": str(saved["user_id"]),
+        "user_name": saved["user_name"],
+        "message": saved["message"],
+        "timestamp": saved["timestamp"].isoformat() + "Z",
+    }
+
+
+@app.get("/league/chat", response_model=List[LeagueChatMessageOut])
+async def get_league_chat(
+    limit: int = Query(50, ge=1, le=200),
+    user_id: str = Depends(verify_token)
+):
+    """
+    Get recent league chat messages for the current user's league.
+    Messages are returned in chronological order (oldest → newest).
+    """
+    user = get_current_user_doc(user_id)
+    league_id = user.get("league_id")
+
+    if not league_id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User is not in a league"
+        )
+
+    cursor = (
+        chats_collection
+        .find({"league_id": ObjectId(league_id)})
+        .sort("timestamp", -1)           
+        .limit(limit)
+    )
+
+    messages = list(cursor)[::-1]        # reverse from oldest to newest
+
+    return [
+        {
+            "_id": str(msg["_id"]),
+            "league_id": str(msg["league_id"]),
+            "user_id": str(msg["user_id"]),
+            "user_name": msg["user_name"],
+            "message": msg["message"],
+            "timestamp": msg["timestamp"].isoformat() + "Z",
+        }
+        for msg in messages
+    ]
 
 # --- Matchup Endpoints (Reward/Educate) ---
 
